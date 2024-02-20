@@ -2115,54 +2115,55 @@ class TransformerAttentionLayer(BaseLayer):
             ValueError: If `mode` is unsupported.
             NotImplementedError: If `cfg.structure` is not supported.
         """
-        cfg = self.config
+        with jax.named_scope("self_attention"):
+            cfg = self.config
 
-        def attention_thunk(target: Tensor) -> Tuple[Optional[NestedTensor], Tensor]:
-            if mode == ForwardMode.FORWARD:
-                atten_state, atten_output = None, self.attention(
-                    query=target,
-                    key=source,
-                    value=source,
-                    attention_logit_biases=attention_logit_biases,
-                )
-            elif mode == ForwardMode.INIT_STATES:
-                assert cached_states is not None
-                atten_state, atten_output = self.attention.prefill_states(
-                    time_step=cached_states["attention"],
-                    query=target,
-                    attention_logit_biases=attention_logit_biases,
-                )
-            elif mode == ForwardMode.EXTEND_STEP:
-                assert cached_states is not None
-                atten_state, atten_output = self.attention.extend_step(
-                    cached_states["attention"],
-                    target,
-                    attention_logit_biases=attention_logit_biases,
+            def attention_thunk(target: Tensor) -> Tuple[Optional[NestedTensor], Tensor]:
+                if mode == ForwardMode.FORWARD:
+                    atten_state, atten_output = None, self.attention(
+                        query=target,
+                        key=source,
+                        value=source,
+                        attention_logit_biases=attention_logit_biases,
+                    )
+                elif mode == ForwardMode.INIT_STATES:
+                    assert cached_states is not None
+                    atten_state, atten_output = self.attention.prefill_states(
+                        time_step=cached_states["attention"],
+                        query=target,
+                        attention_logit_biases=attention_logit_biases,
+                    )
+                elif mode == ForwardMode.EXTEND_STEP:
+                    assert cached_states is not None
+                    atten_state, atten_output = self.attention.extend_step(
+                        cached_states["attention"],
+                        target,
+                        attention_logit_biases=attention_logit_biases,
+                    )
+                else:
+                    raise ValueError(f"Unrecognized mode {mode}.")
+                return atten_state, atten_output
+
+            if cfg.structure == "prenorm":
+                skip_input = target  # pre-norm: where normalization happens within the residual part.
+                norm_target = self.norm(target)
+                atten_state, atten_output = attention_thunk(norm_target)
+                data = skip_input + self.stochastic_depth(self.dropout(atten_output.data))
+            elif cfg.structure == "postnorm":
+                # This is the structure used by the original Transformer, BERT, and RoBERTa.
+                atten_state, atten_output = attention_thunk(target)
+                # Post-norm: norm applied on the sum of input and attention output.
+                data = self.norm(target + self.stochastic_depth(self.dropout(atten_output.data)))
+            elif cfg.structure == "hybridnorm":
+                skip_input = target  # pre-norm: where normalization happens within the residual part.
+                norm_target = self.prenorm(target)
+                atten_state, atten_output = attention_thunk(norm_target)
+                data = skip_input + self.stochastic_depth(
+                    self.dropout(self.postnorm(atten_output.data))
                 )
             else:
-                raise ValueError(f"Unrecognized mode {mode}.")
-            return atten_state, atten_output
-
-        if cfg.structure == "prenorm":
-            skip_input = target  # pre-norm: where normalization happens within the residual part.
-            norm_target = self.norm(target)
-            atten_state, atten_output = attention_thunk(norm_target)
-            data = skip_input + self.stochastic_depth(self.dropout(atten_output.data))
-        elif cfg.structure == "postnorm":
-            # This is the structure used by the original Transformer, BERT, and RoBERTa.
-            atten_state, atten_output = attention_thunk(target)
-            # Post-norm: norm applied on the sum of input and attention output.
-            data = self.norm(target + self.stochastic_depth(self.dropout(atten_output.data)))
-        elif cfg.structure == "hybridnorm":
-            skip_input = target  # pre-norm: where normalization happens within the residual part.
-            norm_target = self.prenorm(target)
-            atten_state, atten_output = attention_thunk(norm_target)
-            data = skip_input + self.stochastic_depth(
-                self.dropout(self.postnorm(atten_output.data))
-            )
-        else:
-            raise NotImplementedError(cfg.structure)
-        return dict(attention=atten_state), self.Output(data=data, probs=atten_output.probs)
+                raise NotImplementedError(cfg.structure)
+            return dict(attention=atten_state), self.Output(data=data, probs=atten_output.probs)
 
     def forward(
         self,
@@ -2410,69 +2411,70 @@ class TransformerFeedForwardLayer(BaseLayer):
                 raise NotImplementedError(f"add_value_rms_norm_summary: {value}")
 
     def forward(self, inputs: Tensor) -> Tensor:
-        cfg = self.config
+        with jax.named_scope("MLP"):
+            cfg = self.config
 
-        def _linear2(x):
-            """Applies linear2, optionally logging RMS norm of the output."""
-            x = self.linear2(x)
-            if "linear2_outputs" in cfg.add_value_rms_norm_summary:
-                rms_norm = (x**2.0).mean().astype(jnp.float32) ** 0.5
-                self.add_summary("rms_norm/linear2_outputs", rms_norm)
+            def _linear2(x):
+                """Applies linear2, optionally logging RMS norm of the output."""
+                x = self.linear2(x)
+                if "linear2_outputs" in cfg.add_value_rms_norm_summary:
+                    rms_norm = (x**2.0).mean().astype(jnp.float32) ** 0.5
+                    self.add_summary("rms_norm/linear2_outputs", rms_norm)
+                return x
+
+            remat_pt1 = "activation"
+            remat_pt2 = "linear2"
+            if cfg.structure == "prenorm":
+                x = self.norm(inputs)
+                x = self._linear1_activation(x)
+                x = self._remat_name(x, remat_pt1)
+                x = self.dropout1(x)
+                x = _linear2(x)
+                x = self._remat_name(x, remat_pt2)
+                x = self.dropout2(x)
+                x = self.stochastic_depth(x)
+                if cfg.residual_weight != 1:
+                    x *= cfg.residual_weight
+                x += inputs
+            elif cfg.structure == "postnorm":
+                x = self._linear1_activation(inputs)
+                x = self._remat_name(x, remat_pt1)
+                x = _linear2(x)
+                x = self._remat_name(x, remat_pt2)
+                x = self.dropout(x)
+                x = self.stochastic_depth(x)
+                if cfg.residual_weight != 1:
+                    x *= cfg.residual_weight
+                x = self.norm(x + inputs)
+            elif cfg.structure == "hybridnorm":
+                x = self.prenorm(inputs)
+                x = self._linear1_activation(x)
+                x = self._remat_name(x, remat_pt1)
+                x = self.dropout1(x)
+                x = _linear2(x)
+                x = self._remat_name(x, remat_pt2)
+                x = self.postnorm(x)
+                x = self.dropout2(x)
+                x = self.stochastic_depth(x)
+                if cfg.residual_weight != 1:
+                    x *= cfg.residual_weight
+                x += inputs
+            elif cfg.structure == "nonorm":
+                x = inputs
+                x = self._linear1_activation(x)
+                x = self._remat_name(x, remat_pt1)
+                x = self.dropout1(x)
+                x = _linear2(x)
+                x = self._remat_name(x, remat_pt2)
+                x = self.dropout2(x)
+                x = self.stochastic_depth(x)
+                # We still apply `residual_weight`, since there is usually a residual link outside of
+                # this layer, e.g., in ParallelTransformerLayer.
+                if cfg.residual_weight != 1:
+                    x *= cfg.residual_weight
+            else:
+                raise NotImplementedError(cfg.structure)
             return x
-
-        remat_pt1 = "activation"
-        remat_pt2 = "linear2"
-        if cfg.structure == "prenorm":
-            x = self.norm(inputs)
-            x = self._linear1_activation(x)
-            x = self._remat_name(x, remat_pt1)
-            x = self.dropout1(x)
-            x = _linear2(x)
-            x = self._remat_name(x, remat_pt2)
-            x = self.dropout2(x)
-            x = self.stochastic_depth(x)
-            if cfg.residual_weight != 1:
-                x *= cfg.residual_weight
-            x += inputs
-        elif cfg.structure == "postnorm":
-            x = self._linear1_activation(inputs)
-            x = self._remat_name(x, remat_pt1)
-            x = _linear2(x)
-            x = self._remat_name(x, remat_pt2)
-            x = self.dropout(x)
-            x = self.stochastic_depth(x)
-            if cfg.residual_weight != 1:
-                x *= cfg.residual_weight
-            x = self.norm(x + inputs)
-        elif cfg.structure == "hybridnorm":
-            x = self.prenorm(inputs)
-            x = self._linear1_activation(x)
-            x = self._remat_name(x, remat_pt1)
-            x = self.dropout1(x)
-            x = _linear2(x)
-            x = self._remat_name(x, remat_pt2)
-            x = self.postnorm(x)
-            x = self.dropout2(x)
-            x = self.stochastic_depth(x)
-            if cfg.residual_weight != 1:
-                x *= cfg.residual_weight
-            x += inputs
-        elif cfg.structure == "nonorm":
-            x = inputs
-            x = self._linear1_activation(x)
-            x = self._remat_name(x, remat_pt1)
-            x = self.dropout1(x)
-            x = _linear2(x)
-            x = self._remat_name(x, remat_pt2)
-            x = self.dropout2(x)
-            x = self.stochastic_depth(x)
-            # We still apply `residual_weight`, since there is usually a residual link outside of
-            # this layer, e.g., in ParallelTransformerLayer.
-            if cfg.residual_weight != 1:
-                x *= cfg.residual_weight
-        else:
-            raise NotImplementedError(cfg.structure)
-        return x
 
     def _linear1_activation(self, x: Tensor) -> Tensor:
         cfg = self.config
@@ -2963,8 +2965,10 @@ def set_double_shard_weights_config(
         ff_layer.linear1.param_partition_spec = (fsdp_axis_names, tp_axis_names)
         ff_layer.linear2.param_partition_spec = (tp_axis_names, fsdp_axis_names)
         # Encourage the right activation sharding.
-        ff_layer.linear1.output_partition_spec = (batch_axis_names, seq_axis_names, tp_axis_names)
-        ff_layer.linear2.output_partition_spec = (batch_axis_names, seq_axis_names, tp_axis_names)
+        #ff_layer.linear1.output_partition_spec = (batch_axis_names, seq_axis_names, tp_axis_names)
+        #ff_layer.linear2.output_partition_spec = (batch_axis_names, seq_axis_names, tp_axis_names)
+        ff_layer.linear1.output_partition_spec = (batch_axis_names, None, tp_axis_names)
+        ff_layer.linear2.output_partition_spec = (batch_axis_names, seq_axis_names, None)
 
     if not isinstance(cfg, Sequence):
         cfg = [cfg]
