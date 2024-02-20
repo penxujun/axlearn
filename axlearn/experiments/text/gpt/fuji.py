@@ -44,9 +44,9 @@ def get_trainer_kwargs(model_size: str, *, vocab_size: int) -> Dict[str, Any]:
                 weight_decay=0.01,
             ),
             max_sequence_length=64,
-            train_batch_size=16,
+            train_batch_size=32,
             max_step=3000,
-            mesh_shape=mesh_shape_from_axes(),  # cpu
+            mesh_shape=mesh_shape_from_axes(data=32),  # cpu
         )
     elif model_size == "7B":
         trainer_kwargs = dict(
