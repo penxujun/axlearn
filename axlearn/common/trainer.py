@@ -35,7 +35,6 @@ from axlearn.common.utils import (
     NestedTensor,
     PartitionSpec,
     Tensor,
-    TensorSpec,
     count_model_params,
     flatten_items,
     match_regex_rules,
@@ -544,7 +543,7 @@ class SpmdTrainer(Module):
                 raise NotImplementedError(f"Partial initialization is not supported for: {key}")
 
         prebuilt_model_state_partition_spec = jax.tree_util.tree_map(
-            lambda value: value.sharding if isinstance(value, TensorSpec) else None,
+            lambda value: value.sharding if isinstance(value, Tensor) else None,
             prebuilt_state.trainer_state.model,
         )
         prebuilt_model_state = jax.tree_util.tree_map(
