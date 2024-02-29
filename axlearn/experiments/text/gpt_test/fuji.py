@@ -18,10 +18,9 @@ from axlearn.common.attention import (
 )
 from axlearn.common.embedding import TransformerTextEmbeddings
 from axlearn.common.layers import RMSNorm
-from axlearn.experiments.text.gpt.common import STEP_DTYPE, learner_config, mesh_shape_from_axes
-from axlearn.experiments.text.gpt.common import model_config as common_model_config
-#from axlearn.experiments.text.gpt.common import scaled_hidden_dim
-from axlearn.common.attention import scaled_hidden_dim
+from axlearn.experiments.text.gpt_test.common import STEP_DTYPE, learner_config, mesh_shape_from_axes
+from axlearn.experiments.text.gpt_test.common import model_config as common_model_config
+from axlearn.experiments.text.gpt.common import scaled_hidden_dim
 
 MODEL_SIZES = ("test", "7B")
 MAX_SEQUENCE_LENGTH = 2048
@@ -35,9 +34,8 @@ def get_trainer_kwargs(model_size: str, *, vocab_size: int) -> Dict[str, Any]:
         trainer_kwargs = dict(
             model_kwargs=dict(
                 num_layers=1,
-                hidden_dim=256,
-                #ffn_dim=scaled_hidden_dim(scale=8 / 3, round_up_to_multiples_of=16),
-                ffn_dim=scaled_hidden_dim(4),
+                hidden_dim=64,
+                ffn_dim=scaled_hidden_dim(scale=8 / 3, round_up_to_multiples_of=16),
                 num_heads=8,
                 vocab_size=32,
             ),

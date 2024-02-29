@@ -232,6 +232,9 @@ class TestCase(parameterized.TestCase):
             if hasattr(a_value, "dtype"):
                 self.assertEqual(a_value.dtype, b_value.dtype)
 
+class NeuronTestCase(TestCase):
+    def _jax_backend(self) -> str:
+        return "neuron"
 
 # TODO(markblee): Move this to axlearn/experiments/test_utils.py, where it's used.
 class TrainerConfigTestCase(TestCase):

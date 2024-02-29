@@ -236,7 +236,8 @@ def model_config(
             )
         }
     )
-    batch_axis_names = ("data")
+
+    batch_axis_names = ("data", "expert", "fsdp")
     cfg = causal_lm.Model.default_config().set(
         decoder=decoder_cfg,
         param_init=model_param_init,
@@ -247,7 +248,7 @@ def model_config(
     # Shard some FFN and attention weights over multiple axes.
     set_double_shard_weights_config(
         cfg.decoder.transformer.layer,
-        batch_axis_names=batch_axis_names,
+        batch_axis_names="data",
         fsdp_axis_names="fsdp",
         tp_axis_names="model",
         seq_axis_names="model",

@@ -35,6 +35,7 @@ from axlearn.common.utils import (
     NestedTensor,
     PartitionSpec,
     Tensor,
+    TensorSpec,
     count_model_params,
     flatten_items,
     match_regex_rules,
@@ -543,13 +544,39 @@ class SpmdTrainer(Module):
                 raise NotImplementedError(f"Partial initialization is not supported for: {key}")
 
         prebuilt_model_state_partition_spec = jax.tree_util.tree_map(
-            lambda value: value.sharding if isinstance(value, Tensor) else None,
+            lambda value: value.sharding if isinstance(value, TensorSpec) else None,
             prebuilt_state.trainer_state.model,
         )
         prebuilt_model_state = jax.tree_util.tree_map(
             lambda value: value if isinstance(value, Tensor) else None,
             prebuilt_state.trainer_state.model,
         )
+
+        def _init_state_cpu(prng_key: Tensor, prebuilt_model_state: NestedTensor):
+            prng_key, init_key = jax.random.split(prng_key)
+
+            cpu_device = jax.devices("cpu")[0]
+            with jax.default_device(cpu_device):
+                logging.info("prebuilt_model_state: %s", utils.shapes(prebuilt_model_state))
+                model_params = self.model.initialize_parameters_recursively(
+                    init_key,
+                    prebuilt=prebuilt_model_state,
+                )
+
+            return prng_key, model_params
+
+
+        def _move_state_to_neuron(prng_key: Tensor, model_params):
+            model_params = jax.device_put(model_params)
+            self.vlog(
+                1, "tree_structure(model_params)=%s", jax.tree_util.tree_structure(model_params)
+            )
+            learner_params = self.learner.init(self._opt_params(model_params))
+            return TrainerState(
+                prng_key=prng_key,
+                model=model_params,
+                learner=learner_params,
+            )
 
         def _init_state(prng_key: Tensor, prebuilt_model_state: NestedTensor):
             prng_key, init_key = jax.random.split(prng_key)
@@ -571,13 +598,16 @@ class SpmdTrainer(Module):
         logging.info("prebuilt_model_state_partition_spec: %s", prebuilt_model_state_partition_spec)
         logging.info("trainer_state_partition_specs: %s", self._trainer_state_partition_specs)
         init_computation = pjit(
-            _init_state,
+            #_init_state,
+            _move_state_to_neuron,
             in_shardings=(None, prebuilt_model_state_partition_spec),
             out_shardings=self._trainer_state_partition_specs,
         )
         self._step_log("Initializing trainer state.")
         with self.mesh():
-            self._trainer_state = init_computation(prng_key, prebuilt_model_state)
+            #self._trainer_state = init_computation(prng_key, prebuilt_model_state)
+            prng_key, model_params = _init_state_cpu(prng_key, prebuilt_model_state)
+            self._trainer_state = init_computation(prng_key, model_params)
 
     def _log_trainer_state_stats(self):
         total_num_params = count_model_params(self._trainer_state.model)
