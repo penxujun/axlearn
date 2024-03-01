@@ -2983,6 +2983,54 @@ def set_double_shard_weights_config(
             set_ffn_partition_specs(layer_cfg.feed_forward)
     # pytype: enable=attribute-error
 
+def set_model_shard_weights_config(
+        cfg: Union[TransformerLayer.Config, Sequence[TransformerLayer.Config]],
+        *,
+        batch_axis_names: Union[str, Sequence[str]] = ("data", "fsdp"),
+        fsdp_axis_names: Union[str, Sequence[str]] = "fsdp",
+        tp_axis_names: Union[str, Sequence[str]] = "model",
+        seq_axis_names: Union[str, Sequence[str]] = "seq",
+):
+    """Sets `cfg` to shard FFN and attention weights over both fsdp and tp axes.
+
+    Args:
+        cfg: (A sequence of) Transformer layer config to apply sharding spec to.
+        batch_axis_names: Axis name(s) over which we shard the batch dimension of output tensors.
+        fsdp_axis_names: Axis name(s) over which we shard fully-sharded-data-parallel tensors.
+        tp_axis_names: Axis name(s) over which we shard tensor-parallel tensors.
+        seq_axis_names: Axis name(s) over which we shard sequence-parallel tensors.
+    """
+
+    # pytype: disable=attribute-error
+    def set_attn_partition_specs(attn_layer: MultiheadAttention.Config):
+        # Shard weights.
+        input_linear_cfg = attn_layer.input_linear
+        if hasattr(input_linear_cfg, "input_linear"):
+            input_linear_cfg = input_linear_cfg.input_linear
+        #input_linear_cfg.layer.param_partition_spec = (None, fsdp_axis_names, tp_axis_names, None)
+        # ptoulme bug - when FusedQKV is enabled it has a shape (3, hidden, num_heads, head_dimension) dimension so add a (None to account for this
+        input_linear_cfg.layer.param_partition_spec = (fsdp_axis_names, tp_axis_names, None)
+        attn_layer.output_linear.param_partition_spec = (fsdp_axis_names, tp_axis_names, None)
+
+    def set_ffn_partition_specs(ff_layer: TransformerFeedForwardLayer.Config):
+        # Shard weights.
+        ff_layer.linear1.param_partition_spec = (fsdp_axis_names, tp_axis_names)
+        ff_layer.linear2.param_partition_spec = (tp_axis_names, fsdp_axis_names)
+        # Encourage the right activation sharding.
+        ff_layer.linear1.output_partition_spec = (batch_axis_names, None, tp_axis_names)
+        ff_layer.linear2.output_partition_spec = (batch_axis_names, None, None)
+
+    #if not isinstance(cfg, Sequence):
+     #   cfg = [cfg]
+    #print(cfg.decoder)
+    cfg.decoder.emb.token_emb.param_partition_spec = (fsdp_axis_names, tp_axis_names) # shard hidden
+    cfg.decoder.lm_head.param_partition_spec = (tp_axis_names, fsdp_axis_names) # shard vocab
+    for layer_cfg in [cfg.decoder.transformer.layer]: # shard the sole layer and its used for all other layers
+        set_attn_partition_specs(layer_cfg.self_attention.attention)
+        if layer_cfg.cross_attention is not None:
+            set_attn_partition_specs(layer_cfg.cross_attention.attention)
+        if isinstance(layer_cfg.feed_forward, TransformerFeedForwardLayer.Config):
+            set_ffn_partition_specs(layer_cfg.feed_forward)
 
 class BaseStackedTransformerLayer(BaseTransformerLayer):
     """The common interface of all stacked transformer layer classes.

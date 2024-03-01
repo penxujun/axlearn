@@ -35,7 +35,7 @@ from axlearn.common.attention import (
     RepeatedTransformerLayer,
     TransformerLayer,
     build_remat_spec,
-    set_double_shard_weights_config,
+    set_model_shard_weights_config,
 )
 from axlearn.common.checkpointer import every_n_steps_policy
 from axlearn.common.config import (
@@ -45,11 +45,11 @@ from axlearn.common.config import (
     maybe_instantiate,
     maybe_set_config,
 )
-from axlearn.common.decoder import Decoder
+from axlearn.common.decoder import Decoder, LmHead
 from axlearn.common.embedding import TransformerTextEmbeddings
 from axlearn.common.evaler import BaseMetricCalculator, ModelSummaryAccumulator, SpmdEvaler
 from axlearn.common.evaler import every_n_steps_policy as eval_every_n_steps_policy
-from axlearn.common.layers import BaseNormalizationLayer, set_bias_recursively, set_norm_recursively
+from axlearn.common.layers import RMSNorm, BaseNormalizationLayer, set_bias_recursively, set_norm_recursively
 from axlearn.common.param_init import PARAM_REGEXP_WEIGHT, DefaultInitializer, WeightInitializer
 from axlearn.common.summary_writer import BaseWriter
 from axlearn.common.trainer import MeshShape, SpmdTrainer
@@ -205,16 +205,20 @@ def model_config(
         A causal LM config.
     """
     layer_cfg = TransformerLayer.default_config()
+    layer_cfg.dtype = jnp.bfloat16
+
     # Feed-forward.
-    layer_cfg.feed_forward.activation = activation_fn
+    #layer_cfg.feed_forward.activation = activation_fn
     layer_cfg.feed_forward.hidden_dim = ffn_dim
-    layer_cfg.feed_forward.structure = ffn_structure
+    #layer_cfg.feed_forward.structure = ffn_structure
+    layer_cfg.feed_forward.norm = RMSNorm.default_config()
+
     # Attention.
     layer_cfg.self_attention.attention.num_heads = num_heads
     if attention_qkv_linear is not None:
         layer_cfg.self_attention.attention.input_linear = attention_qkv_linear
-    layer_cfg.self_attention.structure = atten_structure
-    layer_cfg.self_attention.attention.atten_logit_cap = atten_logit_cap
+    #layer_cfg.self_attention.structure = atten_structure
+    #layer_cfg.self_attention.attention.atten_logit_cap = atten_logit_cap
     if stack_cfg.klass is RepeatedTransformerLayer:
         # Enable remat to reduce memory usage for larger models.
         layer_cfg.remat_spec = build_remat_spec(stack_cfg)
@@ -222,11 +226,13 @@ def model_config(
     transformer_cls = stack_cfg.set(num_layers=num_layers, layer=layer_cfg)
     decoder_cfg = Decoder.default_config().set(
         transformer=transformer_cls,
-        attention_mask=attention_mask,
+        #attention_mask=attention_mask,
         dim=hidden_dim,
         vocab_size=vocab_size,
         emb=emb_cfg,
         dropout_rate=dropout_rate,
+        lm_head=LmHead.default_config().set(dtype=jnp.bfloat16),
+        output_norm=RMSNorm.default_config().set(eps=0.1),
     )
     # Model.
     model_param_init = DefaultInitializer.default_config().set(
@@ -237,26 +243,27 @@ def model_config(
         }
     )
 
-    batch_axis_names = ("data", "expert", "fsdp")
+    batch_axis_names = "data"
     cfg = causal_lm.Model.default_config().set(
         decoder=decoder_cfg,
-        param_init=model_param_init,
-        batch_axis_names=batch_axis_names,
-        seq_axis_names="seq",
+        #param_init=model_param_init,
+        #batch_axis_names=batch_axis_names,
+        #seq_axis_names="seq",
     )
     cfg.dtype = jnp.float32
     # Shard some FFN and attention weights over multiple axes.
-    set_double_shard_weights_config(
-        cfg.decoder.transformer.layer,
+    set_model_shard_weights_config(
+        cfg,
         batch_axis_names="data",
         fsdp_axis_names="fsdp",
         tp_axis_names="model",
         seq_axis_names="model",
     )
-    cfg.decoder.logits_partition_spec = (batch_axis_names, "seq", "model")
+    #cfg.decoder.logits_partition_spec = (batch_axis_names, "seq", "model")
     set_bias_recursively(cfg, False)
     set_norm_recursively(cfg, normalization)
     cfg.z_loss_scale = z_loss_scale
+
     return cfg
 
 

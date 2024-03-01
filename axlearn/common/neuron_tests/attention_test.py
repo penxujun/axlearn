@@ -263,7 +263,6 @@ class TransformerTest(NeuronTestCase):
                 dropout_rate=0.0,
             )
             model_cfg = causal_lm.Model.default_config().set(decoder=decoder_cfg, name="llama")
-            print(model_cfg)
             set_model_shard_weights_config(
                 model_cfg,
                 batch_axis_names='data',
@@ -271,6 +270,7 @@ class TransformerTest(NeuronTestCase):
                 tp_axis_names='model',
                 seq_axis_names='model',
             )
+            print(model_cfg)
             model = model_cfg.instantiate(parent=None)
 
             self._trainer_state_specs = collect_param_specs(model)

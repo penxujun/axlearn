@@ -9,18 +9,22 @@ The fuji models are set up to imitate LLaMA-1 (https://arxiv.org/abs/2302.13971)
 
 from typing import Any, Dict, Optional, Union
 
+import jax.numpy as jnp
+
 from axlearn.common import causal_lm, config
 from axlearn.common.attention import (
     CausalAttentionLogitBiasLayer,
     FusedQKVLinear,
     RepeatedTransformerLayer,
+    StackedTransformerLayer,
     RoFormerQKVLinear,
 )
 from axlearn.common.embedding import TransformerTextEmbeddings
 from axlearn.common.layers import RMSNorm
 from axlearn.experiments.text.gpt_test.common import STEP_DTYPE, learner_config, mesh_shape_from_axes
 from axlearn.experiments.text.gpt_test.common import model_config as common_model_config
-from axlearn.experiments.text.gpt.common import scaled_hidden_dim
+#from axlearn.experiments.text.gpt.common import scaled_hidden_dim
+from axlearn.common.attention import scaled_hidden_dim
 
 MODEL_SIZES = ("test", "7B")
 MAX_SEQUENCE_LENGTH = 2048
@@ -33,11 +37,12 @@ def get_trainer_kwargs(model_size: str, *, vocab_size: int) -> Dict[str, Any]:
     if model_size == "test":
         trainer_kwargs = dict(
             model_kwargs=dict(
-                num_layers=1,
-                hidden_dim=64,
-                ffn_dim=scaled_hidden_dim(scale=8 / 3, round_up_to_multiples_of=16),
-                num_heads=8,
-                vocab_size=32,
+                num_layers=1, #4
+                hidden_dim=64, #4096
+                #ffn_dim=scaled_hidden_dim(scale=8 / 3, round_up_to_multiples_of=16),
+                ffn_dim=scaled_hidden_dim(4),
+                num_heads=8, #32
+                vocab_size=32, #2048
             ),
             learner_kwargs=dict(
                 peak_lr=6e-4,
@@ -118,17 +123,18 @@ def model_config(
         hidden_dim=hidden_dim,
         num_heads=num_heads,
         vocab_size=vocab_size,
-        stack_cfg=RepeatedTransformerLayer.default_config(),
+        stack_cfg=StackedTransformerLayer.default_config(),
         activation_fn=activation_fn,
         ffn_dim=ffn_dim,
-        normalization=RMSNorm.default_config().set(eps=1e-5, forward_dtype=None),
+        normalization=RMSNorm.default_config().set(eps=1e-8, forward_dtype=jnp.float32),
         dropout_rate=dropout_rate,
-        emb_cfg=TransformerTextEmbeddings.default_config().set(pos_emb=None),
+        emb_cfg=TransformerTextEmbeddings.default_config().set(pos_emb=None).set(dtype=jnp.bfloat16),
         attention_mask=CausalAttentionLogitBiasLayer.default_config(),
         # RoPE embeddings: https://arxiv.org/abs/2104.09864.
-        attention_qkv_linear=RoFormerQKVLinear.default_config().set(
-            input_linear=FusedQKVLinear.default_config().set(cache_dtype=STEP_DTYPE),
-            rotary_value=False,
-        ),
+        #attention_qkv_linear=RoFormerQKVLinear.default_config().set(
+        #    input_linear=FusedQKVLinear.default_config().set(cache_dtype=STEP_DTYPE),
+        #    rotary_value=False,
+        #),
+        attention_qkv_linear=FusedQKVLinear.default_config(),
     )
     return cfg
