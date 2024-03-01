@@ -93,7 +93,7 @@ from axlearn.common.utils import (
     check_numerics,
     get_or_none,
     shapes,
-    split_prng_key,
+    split_prng_key, with_sharding_constraint,
 )
 
 NEG_INF = -1e15
@@ -1617,6 +1617,7 @@ class MultiheadAttention(BaseLayer):
             value=value,
             attention_logit_biases=attention_logit_biases,
         )
+        output = with_sharding_constraint(output, PartitionSpec('data', None, None))
         return output
 
     def _cap_logits(self, logits: Tensor) -> Tensor:
@@ -2958,6 +2959,7 @@ def set_double_shard_weights_config(
         if hasattr(input_linear_cfg, "input_linear"):
             input_linear_cfg = input_linear_cfg.input_linear
         input_linear_cfg.layer.param_partition_spec = (fsdp_axis_names, tp_axis_names, None)
+        # input_linear_cfg.layer.param_partition_spec = (None, fsdp_axis_names, tp_axis_names, None)
         attn_layer.output_linear.param_partition_spec = (fsdp_axis_names, tp_axis_names, None)
 
     def set_ffn_partition_specs(ff_layer: TransformerFeedForwardLayer.Config):
@@ -2965,8 +2967,8 @@ def set_double_shard_weights_config(
         ff_layer.linear1.param_partition_spec = (fsdp_axis_names, tp_axis_names)
         ff_layer.linear2.param_partition_spec = (tp_axis_names, fsdp_axis_names)
         # Encourage the right activation sharding.
-        #ff_layer.linear1.output_partition_spec = (batch_axis_names, seq_axis_names, tp_axis_names)
-        #ff_layer.linear2.output_partition_spec = (batch_axis_names, seq_axis_names, tp_axis_names)
+        # ff_layer.linear1.output_partition_spec = (batch_axis_names, seq_axis_names, tp_axis_names)
+        # ff_layer.linear2.output_partition_spec = (batch_axis_names, seq_axis_names, tp_axis_names)
         ff_layer.linear1.output_partition_spec = (batch_axis_names, None, tp_axis_names)
         ff_layer.linear2.output_partition_spec = (batch_axis_names, seq_axis_names, None)
 

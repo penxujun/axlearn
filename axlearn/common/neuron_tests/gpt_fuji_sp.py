@@ -6,10 +6,11 @@ import jax
 import pytest
 import numpy as np
 from jax import numpy as jnp
+from jax.sharding import PartitionSpec
 from jax.sharding import NamedSharding
-from jax.experimental.pjit import pjit
-from axlearn.common import attention, utils
+from axlearn.common import attention, test_utils, utils
 from axlearn.common.attention import (
+    ParallelTransformerLayer,
     TransformerLayer,
     scaled_hidden_dim,
     TransformerFeedForwardLayer,
@@ -19,19 +20,23 @@ from axlearn.common.attention import (
     CausalAttentionLogitBiasLayer,
     build_remat_spec,
 )
+from axlearn.common.param_init import PARAM_REGEXP_WEIGHT, DefaultInitializer, WeightInitializer
 from axlearn.common.embedding import TransformerTextEmbeddings
 from axlearn.common.base_layer import ParameterSpec
 from axlearn.common.layers import (
     RMSNorm,
     set_bias_recursively,
     set_norm_recursively,
+    BaseNormalizationLayer,
 )
-from axlearn.common.test_utils import NeuronTestCase
+from axlearn.common.test_utils import NeuronTestCase, assert_allclose, dummy_segments_positions
 from typing import Any, Callable, Dict, List, NamedTuple, Optional, Sequence, Tuple, Union
 from axlearn.common.utils import Tensor, VDict
 from axlearn.common.module import functional as F
 from axlearn.common.decoder import Decoder
 from axlearn.common.state_builder import Builder as TrainerStateBuilder
+from jax.experimental.pjit import pjit
+from axlearn.common import causal_lm
 from axlearn.common.utils import (
     MeshShape,
     NestedPartitionSpec,
@@ -65,9 +70,9 @@ class TransformerTest(NeuronTestCase):
         # build model config and  instantiate
         # -------------------------------------------
         model_dim = 128
-        num_heads = 8
+        num_heads = 8 
         vocab_size = 32
-        num_layers = 1
+        num_layers = 2 
         batch_size, tgt_len = 32, 64
 
         # transformer layer
@@ -104,7 +109,7 @@ class TransformerTest(NeuronTestCase):
             batch_axis_names='data',
             fsdp_axis_names='fsdp',
             tp_axis_names='model',
-            seq_axis_names='model',
+            seq_axis_names='seq',
         )
 
         decoder_cfg.logits_partition_spec = (batch_axis_names, "seq", "model")

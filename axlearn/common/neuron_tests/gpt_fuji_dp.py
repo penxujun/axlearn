@@ -60,34 +60,6 @@ class TrainerState(NamedTuple):
     learner: Union[NestedTensor, NestedPartitionSpec]
 
 
-def backup(self):
-    self.assertEqual(
-        {
-            "feed_forward": {
-                "dropout1": {},
-                "dropout2": {},
-                "linear1": {"weight": (16, 64)},
-                "linear2": {"weight": (64, 16)},
-                "stochastic_depth": {},
-            },
-            "norm": {"scale": (16,)},
-            "self_attention": {
-                "dropout": {},
-                "i_proj": {
-                    "k_proj": {"weight": (16, 4, 4)},
-                    "q_proj": {"weight": (16, 4, 4)},
-                    "v_proj": {"weight": (16, 4, 4)},
-                },
-                "o_proj": {"weight": (16, 4, 4)},
-                "scale_key": {},
-                "scale_query": {},
-            },
-        },
-        # utils.shapes(layer_params),
-        utils.shapes(""),
-    )
-
-
 class TransformerTest(NeuronTestCase):
     """Tests TransformerLayer."""
 
@@ -98,8 +70,8 @@ class TransformerTest(NeuronTestCase):
         # -------------------------------------------
         # build model config and  instantiate
         # -------------------------------------------
-        model_dim = 8
-        num_heads = 4
+        model_dim = 16 
+        num_heads = 8
         vocab_size = 32
 
         # transformer layer
@@ -129,27 +101,6 @@ class TransformerTest(NeuronTestCase):
             dropout_rate=0.0,
         )
 
-        """
-        # Model.
-        model_param_init = DefaultInitializer.default_config().set(
-            init_by_param_name={
-                PARAM_REGEXP_WEIGHT: WeightInitializer.default_config().set(
-                    fan="fan_in", distribution="normal"
-                )
-            }
-        )
-        
-        batch_axis_names = ("data", "expert", "fsdp")
-        model_cfg = causal_lm.Model.default_config().set(
-            name="test",
-            decoder=decoder_cfg,
-            param_init=model_param_init,
-            batch_axis_names=batch_axis_names,
-            seq_axis_names="seq",
-        )
-        model_cfg.dtype = jnp.float32
-        """
-
         batch_axis_names = ("data", "expert", "fsdp")
         # Shard some FFN and attention weights over multiple axes.
         set_double_shard_weights_config(
@@ -163,7 +114,6 @@ class TransformerTest(NeuronTestCase):
         decoder_cfg.logits_partition_spec = (batch_axis_names, "seq", "model")
         set_bias_recursively(decoder_cfg, False)
         set_norm_recursively(decoder_cfg, RMSNorm.default_config().set(eps=1e-5, forward_dtype=None))
-        #model_cfg.z_loss_scale = 0.0  # z_loss_scale
 
         # instance of this model
         model = decoder_cfg.instantiate(parent=None)
@@ -231,27 +181,19 @@ class TransformerTest(NeuronTestCase):
 
             model_params = p_move_to_neuron(model_params)
 
-            def print_dict_structure(d, indent=0):
-                for key, value in d.items():
-                    print(" " * indent + f"{key}: {type(value)}")
-                    if isinstance(value, dict):
-                        print_dict_structure(value, indent + 4)
-
-            # print_dict_structure(layer_params)
             # print(model_params)
 
-            # jax.debug.visualize_array_sharding(np.squeeze(model_params['decoder']["transformer"]["repeat"]["layer"]['feed_forward']['linear1']['weight']))
+            # jax.debug.visualize_array_sharding(model_params["transformer"]["repeat"]["layer"]['feed_forward']['linear1']['weight'][0])
             batch_size, tgt_len = 32, 64
-            #rng = np.random.default_rng(seed=123)
-            #target = rng.random([batch_size, tgt_len], dtype=np.float32)
-            target = np.random.randint(0, 32, size=(batch_size, tgt_len))
-            #mask = attention.make_causal_mask(tgt_len)
-            #mask = jnp.tile(mask[None, None, :, :], (batch_size, num_heads, 1, 1))
-            #mask = jax.device_put(mask, NamedSharding(mesh, PartitionSpec('data', 'model', None, None)))
+            rng = np.random.default_rng(seed=123)
+            target = rng.integers(0, 32, (batch_size, tgt_len))
             input_tensor = jnp.asarray(target)
             input_tensor = jax.device_put(input_tensor, NamedSharding(mesh, PartitionSpec('data', None)))
 
-            #jax.debug.visualize_array_sharding(input_tensor)
+            jax.debug.visualize_array_sharding(input_tensor)
+
+            print(model_params)
+            print(self._prebuilt_model_state_partition_spec)
 
             def run(input_tensor, model_params):
                 model_outputs, _ = F(
@@ -268,9 +210,9 @@ class TransformerTest(NeuronTestCase):
                                              self._prebuilt_model_state_partition_spec))
                           
             model_outputs = run(input_tensor, model_params)
-            print(model_outputs["logits"].shape)
+            print(model_outputs["logits"])
             #self.assertEqual(target.shape, model_outputs.data.shape)
-            
+
     @pytest.mark.skip
     def test_backward(self):
         """A test of TransformerLayer backward."""

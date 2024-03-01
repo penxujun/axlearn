@@ -45,7 +45,7 @@ from axlearn.common.config import (
     maybe_instantiate,
     maybe_set_config,
 )
-from axlearn.common.decoder import Decoder
+from axlearn.common.decoder import Decoder, LmHead
 from axlearn.common.embedding import TransformerTextEmbeddings
 from axlearn.common.evaler import BaseMetricCalculator, ModelSummaryAccumulator, SpmdEvaler
 from axlearn.common.evaler import every_n_steps_policy as eval_every_n_steps_policy
@@ -226,6 +226,7 @@ def model_config(
         vocab_size=vocab_size,
         emb=emb_cfg,
         dropout_rate=dropout_rate,
+        lm_head=LmHead.default_config().set(dtype=jnp.bfloat16)
     )
     # Model.
     model_param_init = DefaultInitializer.default_config().set(
