@@ -600,7 +600,7 @@ class SpmdTrainer(Module):
             #_init_state,
             _move_state_to_neuron,
             in_shardings=(None, prebuilt_model_state_partition_spec),
-            #out_shardings=self._trainer_state_partition_specs,
+            out_shardings=self._trainer_state_partition_specs,
         )
         self._step_log("Initializing trainer state.")
         with self.mesh():
