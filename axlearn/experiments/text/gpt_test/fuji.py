@@ -38,17 +38,17 @@ def get_trainer_kwargs(model_size: str, *, vocab_size: int) -> Dict[str, Any]:
         trainer_kwargs = dict(
             model_kwargs=dict(
                 num_layers=1, #4
-                hidden_dim=64, #4096
+                hidden_dim=256, #4096
                 #ffn_dim=scaled_hidden_dim(scale=8 / 3, round_up_to_multiples_of=16),
                 ffn_dim=scaled_hidden_dim(4),
                 num_heads=8, #32
-                vocab_size=32, #2048
+                vocab_size=64, #2048
             ),
             learner_kwargs=dict(
                 peak_lr=6e-4,
                 weight_decay=0.01,
             ),
-            max_sequence_length=64,
+            max_sequence_length=128, #4096
             train_batch_size=32,
             max_step=3000,
             mesh_shape=mesh_shape_from_axes(data=4, model=8),  # cpu
@@ -126,7 +126,8 @@ def model_config(
         stack_cfg=StackedTransformerLayer.default_config(),
         activation_fn=activation_fn,
         ffn_dim=ffn_dim,
-        normalization=RMSNorm.default_config().set(eps=1e-8, forward_dtype=jnp.float32),
+        #normalization=RMSNorm.default_config().set(eps=1e-8, forward_dtype=jnp.float32),
+        normalization=RMSNorm.default_config().set(eps=1e-8, forward_dtype=jnp.bfloat16),
         dropout_rate=dropout_rate,
         emb_cfg=TransformerTextEmbeddings.default_config().set(pos_emb=None).set(dtype=jnp.bfloat16),
         attention_mask=CausalAttentionLogitBiasLayer.default_config(),

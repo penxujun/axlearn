@@ -35,6 +35,7 @@ from axlearn.common.utils import (
     NestedTensor,
     PartitionSpec,
     Tensor,
+    TensorSpec,
     count_model_params,
     flatten_items,
     match_regex_rules,
@@ -543,7 +544,7 @@ class SpmdTrainer(Module):
                 raise NotImplementedError(f"Partial initialization is not supported for: {key}")
 
         prebuilt_model_state_partition_spec = jax.tree_util.tree_map(
-            lambda value: value.sharding if isinstance(value, Tensor) else None,
+            lambda value: value.sharding if isinstance(value, TensorSpec) else None,
             prebuilt_state.trainer_state.model,
         )
         prebuilt_model_state = jax.tree_util.tree_map(
@@ -559,11 +560,10 @@ class SpmdTrainer(Module):
                 logging.info("prebuilt_model_state: %s", utils.shapes(prebuilt_model_state))
                 model_params = self.model.initialize_parameters_recursively(
                     init_key,
-                    prebuilt=prebuilt_model_state,
+                    #prebuilt=prebuilt_model_state,
                 )
 
             return prng_key, model_params
-
 
         def _move_state_to_neuron(prng_key: Tensor, model_params):
             model_params = jax.device_put(model_params)
@@ -600,7 +600,7 @@ class SpmdTrainer(Module):
             #_init_state,
             _move_state_to_neuron,
             in_shardings=(None, prebuilt_model_state_partition_spec),
-            out_shardings=self._trainer_state_partition_specs,
+            #out_shardings=self._trainer_state_partition_specs,
         )
         self._step_log("Initializing trainer state.")
         with self.mesh():

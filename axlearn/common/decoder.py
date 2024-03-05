@@ -700,7 +700,10 @@ class Decoder(DecodingMixin, BaseLayer):
             raise ValueError("segment_ids and positions must be provided together")
         cfg = self.config
         if jax.default_backend() == 'neuron': # Neuron does not support sequence packing
-            mask = self.create_causal_mask(input_ids, cfg.transformer.layer.self_attention.attention.num_heads)
+            mask = self.create_causal_mask(
+                input_ids=input_ids, 
+                num_heads=cfg.transformer.layer.self_attention.attention.num_heads
+            )
             return mask
         if segment_ids is None or positions is None:
             segment_ids = _segment_ids_from_causal_input_ids(
