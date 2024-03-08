@@ -33,6 +33,7 @@ from axlearn.common.utils import (
     MeshShape,
     NestedPartitionSpec,
     NestedTensor,
+    DataPartitionType,
     PartitionSpec,
     Tensor,
     TensorSpec,
@@ -77,6 +78,10 @@ class SpmdTrainer(Module):
 
         # The input source.
         input: Required[InstantiableConfig] = REQUIRED
+
+        # The input partition:
+        # Options: FULL (default), DATA, REPLICATED
+        input_partition_type: Required[DataPartitionType] = DataPartitionType.FULL
 
         # A summary writer to log tagged summary values.
         summary_writer: BaseWriter.Config = SummaryWriter.default_config()
@@ -263,7 +268,7 @@ class SpmdTrainer(Module):
 
     def _train_step_input_partition_specs(self):
         # By default, each input tensor is fully partitioned along the batch axis.
-        return utils.input_partition_spec()
+        return utils.input_partition_spec(self.config.input_partition_type)
 
     def model_params_for_eval(self):
         state = self.trainer_state
@@ -434,7 +439,7 @@ class SpmdTrainer(Module):
                     self._step = self._step + 1
                     self.vlog(3, "Start step %s", self.step)
                     output = self._run_step(
-                        utils.host_to_global_device_array(input_batch),
+                        utils.host_to_global_device_array(input_batch, partition=cfg.input_partition_type),
                         force_run_evals=force_run_eval_sets_at_max_step
                         if self.step >= cfg.max_step
                         else None,
@@ -560,7 +565,7 @@ class SpmdTrainer(Module):
                 logging.info("prebuilt_model_state: %s", utils.shapes(prebuilt_model_state))
                 model_params = self.model.initialize_parameters_recursively(
                     init_key,
-                    #prebuilt=prebuilt_model_state,
+                    prebuilt=prebuilt_model_state,
                 )
 
             return prng_key, model_params
