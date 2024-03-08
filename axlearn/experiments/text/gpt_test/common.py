@@ -53,7 +53,7 @@ from axlearn.common.layers import RMSNorm, BaseNormalizationLayer, set_bias_recu
 from axlearn.common.param_init import PARAM_REGEXP_WEIGHT, DefaultInitializer, WeightInitializer
 from axlearn.common.summary_writer import BaseWriter
 from axlearn.common.trainer import MeshShape, SpmdTrainer
-from axlearn.common.utils import get_data_dir
+from axlearn.common.utils import get_data_dir, DataPartitionType
 from axlearn.experiments.text.common import DataMixtureComponent, tfds_text_source
 from axlearn.experiments.trainer_config_utils import TrainerConfigFn
 
@@ -474,6 +474,7 @@ def get_trainer_config_fn(
     learner_cfg: learner.Learner.Config,
     max_step: int,
     train_batch_size: int,
+    input_partition_type: DataPartitionType,
     mesh_shape: Sequence[int],
     train_input_source: InstantiableConfig[input_tf_data.BuildDatasetFn],
     evalers: Dict[str, SpmdEvaler.Config],
@@ -528,6 +529,7 @@ def get_trainer_config_fn(
                 pad_example_fn=input_tf_data.default_pad_example_fn,
             ),
         )
+        cfg.input_partition_type = input_partition_type 
         cfg.evalers = {}
         for name, evaler_cfg in evalers.items():
             evaler_cfg.input.batcher.set(global_batch_size=eval_batch_size or train_batch_size)
