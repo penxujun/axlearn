@@ -158,8 +158,10 @@ def text_to_lm_training_input(
         # Unbatch to yield one training example per iteration.
         ds = ds.unbatch()
         # Shuffle so that read order is not dominated by document order.
+        """
         if shuffle_buffer_size > 0:
             ds = ds.shuffle(shuffle_buffer_size, reshuffle_each_iteration=True)
+        """
         return ds
 
     return process
@@ -884,7 +886,8 @@ def lm_text_preprocessor(
                 replace_newlines_with=replace_newlines_with,
                 max_padding_fraction=max_padding_fraction,
                 window_size=window_size,
-                shuffle_buffer_size=shuffle_buffer_size,
+                #shuffle_buffer_size=shuffle_buffer_size,
+                shuffle_buffer_size=0,
                 token_adjuster_cfg=token_adjuster_cfg,
                 is_training=is_training if is_training is not None else True,
             )
