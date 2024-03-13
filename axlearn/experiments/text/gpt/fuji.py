@@ -34,19 +34,19 @@ def get_trainer_kwargs(model_size: str, *, vocab_size: int) -> Dict[str, Any]:
         trainer_kwargs = dict(
             model_kwargs=dict(
                 num_layers=4,
-                hidden_dim=8,
+                hidden_dim=128*32,
                 ffn_dim=scaled_hidden_dim(scale=8 / 3, round_up_to_multiples_of=16),
-                num_heads=4,
-                vocab_size=32,
+                num_heads=32,
+                #vocab_size=32,
             ),
             learner_kwargs=dict(
                 peak_lr=6e-4,
                 weight_decay=0.01,
             ),
-            max_sequence_length=64,
-            train_batch_size=16,
+            #max_sequence_length=64,
+            train_batch_size=8,
             max_step=3000,
-            mesh_shape=mesh_shape_from_axes(),  # cpu
+            mesh_shape=mesh_shape_from_axes(data=2, model=4),  # cpu
         )
     elif model_size == "7B":
         trainer_kwargs = dict(
