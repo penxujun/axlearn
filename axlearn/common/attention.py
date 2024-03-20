@@ -550,8 +550,8 @@ def softmax_with_biases(logits: Tensor, attention_logit_biases: Optional[Tensor]
     logits_dtype = logits.dtype
     if logits_dtype in (jnp.bfloat16, jnp.float16):
         # Avoid computing softmax in 16-bit floats.
-        if jax.default_backend() != "neuron":
-            logits = logits.astype(jnp.float32)
+        #if jax.default_backend() != "neuron":
+        logits = logits.astype(jnp.float32)
     probs = jax.nn.softmax(logits, axis=-1)
     if probs.dtype != logits_dtype:
         probs = probs.astype(logits_dtype)
@@ -3553,6 +3553,16 @@ def build_remat_spec(
     if stack_cfg.klass is PipelinedTransformerLayer:
         return None
     attention_name = stack_cfg.layer.self_attention.attention.klass.__name__
+    if jax.default_backend() == 'neuron':
+        return RematSpec(
+            prevent_cse=stack_cfg.klass is StackedTransformerLayer,
+            policy=config_for_function(jax_remat_policies.save_only_these_names).set(
+                names_which_can_be_saved=[
+                    f"{attention_name}.{el}"
+                    for el in ["q_proj", "k_proj", "v_proj", "context"]
+                ]
+            )
+        )
     return RematSpec(
         prevent_cse=stack_cfg.klass is StackedTransformerLayer,
         # If we are running inside a jax.lax.scan (Repeated/Pipelined transformers

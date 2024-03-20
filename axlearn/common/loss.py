@@ -134,8 +134,8 @@ def cross_entropy(
         ValueError: If cfg.label_smoothing is > 0 when soft_labels is provided.
     """
     if logits.dtype in (jnp.bfloat16, jnp.float16):
-        if jax.default_backend() != "neuron":
-            logits = logits.astype(jnp.float32)
+        #if jax.default_backend() != "neuron":
+        logits = logits.astype(jnp.float32)
     if z_loss_scale < 0:
         raise ValueError("z_loss_scale should not be negative.")
     num_classes = logits.shape[-1]

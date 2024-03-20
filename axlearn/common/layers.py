@@ -1238,8 +1238,16 @@ class Embedding(BaseLayer):
         )
 
     def forward(self, x: Tensor) -> Tensor:
+        """
         emb = self.parameters["weight"]
         return emb[x]
+        """
+        x = with_sharding_constraint(x, PartitionSpec('data', None))
+        emb = self.parameters["weight"]
+        emb = with_sharding_constraint(emb, PartitionSpec('model', None))
+        activation = emb[x]
+        activation = with_sharding_constraint(activation, PartitionSpec('data', None, None))
+        return activation
 
     def attend(self, x: Tensor) -> Tensor:
         """Apply query array 'x' to the embedding weight array.
