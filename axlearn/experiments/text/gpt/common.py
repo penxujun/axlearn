@@ -36,6 +36,7 @@ from axlearn.common.attention import (
     TransformerLayer,
     build_remat_spec,
     set_double_shard_weights_config,
+    StackedTransformerLayer
 )
 from axlearn.common.checkpointer import every_n_steps_policy
 from axlearn.common.config import (
@@ -45,7 +46,7 @@ from axlearn.common.config import (
     maybe_instantiate,
     maybe_set_config,
 )
-from axlearn.common.decoder import Decoder
+from axlearn.common.decoder import Decoder, LmHead
 from axlearn.common.embedding import TransformerTextEmbeddings
 from axlearn.common.evaler import BaseMetricCalculator, ModelSummaryAccumulator, SpmdEvaler
 from axlearn.common.evaler import every_n_steps_policy as eval_every_n_steps_policy
@@ -58,7 +59,7 @@ from axlearn.experiments.text.common import DataMixtureComponent, tfds_text_sour
 from axlearn.experiments.trainer_config_utils import TrainerConfigFn
 
 REPLACE_NEWLINES_WITH = "<n>"
-EVAL_EVERY_N_STEPS = 5_000
+EVAL_EVERY_N_STEPS = 50_000
 
 
 # We typically use bfloat16 as the step dtype,
@@ -214,7 +215,7 @@ def model_config(
         layer_cfg.self_attention.attention.input_linear = attention_qkv_linear
     layer_cfg.self_attention.structure = atten_structure
     layer_cfg.self_attention.attention.atten_logit_cap = atten_logit_cap
-    if stack_cfg.klass is RepeatedTransformerLayer:
+    if stack_cfg.klass is RepeatedTransformerLayer or stack_cfg.klass is StackedTransformerLayer:
         # Enable remat to reduce memory usage for larger models.
         layer_cfg.remat_spec = build_remat_spec(stack_cfg)
     # Stack.
@@ -226,6 +227,7 @@ def model_config(
         vocab_size=vocab_size,
         emb=emb_cfg,
         dropout_rate=dropout_rate,
+        lm_head=LmHead.default_config().set(dtype=jnp.bfloat16)  #bfloat16
     )
     # Model.
     model_param_init = DefaultInitializer.default_config().set(
@@ -242,16 +244,20 @@ def model_config(
         batch_axis_names=batch_axis_names,
         seq_axis_names="seq",
     )
-    cfg.dtype = jnp.float32
+    cfg.dtype = jnp.bfloat16
     # Shard some FFN and attention weights over multiple axes.
     set_double_shard_weights_config(
         cfg.decoder.transformer.layer,
         batch_axis_names=batch_axis_names,
-        fsdp_axis_names=("expert", "fsdp", "seq"),
+        fsdp_axis_names="data",
         tp_axis_names="model",
         seq_axis_names=("seq",),
     )
-    cfg.decoder.logits_partition_spec = (batch_axis_names, "seq", "model")
+    tp_axis_names='model'
+    fsdp_axis_names='data'
+    cfg.decoder.emb.token_emb.param_partition_spec = (tp_axis_names, fsdp_axis_names) # shard vocab
+    cfg.decoder.lm_head.param_partition_spec = (tp_axis_names, fsdp_axis_names) # shard vocab
+    #cfg.decoder.logits_partition_spec = (batch_axis_names, "seq", "model")
     set_bias_recursively(cfg, False)
     set_norm_recursively(cfg, normalization)
     cfg.z_loss_scale = z_loss_scale
@@ -290,6 +296,7 @@ def learner_config(
                 weight_decay=weight_decay,
                 weight_decay_per_param_scale=None,
                 adam_update_transformation=None,
+                mu_dtype=jnp.bfloat16
             ),
         ]
     )
@@ -471,7 +478,7 @@ def get_trainer_config_fn(
     evalers: Dict[str, SpmdEvaler.Config],
     mesh_axis_names: Sequence[str] = MESH_AXIS_NAMES,
     mesh_rules: Optional[Sequence[Tuple[str, Optional[MeshShape]]]] = None,
-    eval_every_n_steps: int = 5000,
+    eval_every_n_steps: int = 50000,
     eval_batch_size: Optional[int] = None,
     keep_every_n_steps: int = 50_000,
     save_every_n_steps: Optional[int] = None,

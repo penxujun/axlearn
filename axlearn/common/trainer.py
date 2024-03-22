@@ -42,7 +42,19 @@ from axlearn.common.utils import (
     prune_tree,
     thread_stack_traces,
 )
-
+import jax
+import optax
+from jax import numpy as jnp
+from jax.sharding import PartitionSpec
+from jax.sharding import NamedSharding
+from axlearn.common.base_layer import ParameterSpec
+from axlearn.common.learner import Learner
+from axlearn.common.module import functional as F, InvocationContext
+from axlearn.common.optimizer_base import NestedOptParam, OptParam
+from axlearn.common.optimizers import AddDecayedWeightsState
+from typing import Any,Dict, List, NamedTuple, Optional, Sequence, Tuple, Union
+from axlearn.common.utils import Tensor, VDict, NestedTensor, TensorSpec
+import os
 
 def _prune_empty(in_tree: NestedTensor) -> NestedTensor:
     """Returns a shallow copy of the input tree with empty subtrees pruned.
@@ -583,15 +595,16 @@ class SpmdTrainer(Module):
                     init_key,
                     prebuilt=prebuilt_model_state,
                 )
+                learner_params = self.learner.init(self._opt_params(model_params))
+                logging.info("CPU initialization completed.")
+            return prng_key, model_params, learner_params
 
-            return prng_key, model_params
-
-        def _move_state_to_neuron(prng_key: Tensor, model_params):
+        def _move_state_to_neuron(prng_key: Tensor, model_params, learner_params):
             model_params = jax.device_put(model_params)
+            learner_params = jax.device_put(learner_params)
             self.vlog(
                 1, "tree_structure(model_params)=%s", jax.tree_util.tree_structure(model_params)
             )
-            learner_params = self.learner.init(self._opt_params(model_params))
             return TrainerState(
                 prng_key=prng_key,
                 model=model_params,
@@ -600,17 +613,26 @@ class SpmdTrainer(Module):
 
         logging.info("prebuilt_model_state_partition_spec: %s", prebuilt_model_state_partition_spec)
         logging.info("trainer_state_partition_specs: %s", self._trainer_state_partition_specs)
-        init_computation = pjit(
+        model_specs = jax.tree_util.tree_map(
+            lambda value: create_named_sharding(value, self.mesh()) if isinstance(value, PartitionSpec) else None,
+            self._trainer_state_partition_specs[1],
+        )
+        learner_specs = jax.tree_util.tree_map(
+            lambda value: create_named_sharding_optimizer(value, self.mesh()) if isinstance(value, TensorSpec) else None,
+            self._learner_state_partition_specs,
+        )
+        init_computation = jax.jit(
             #_init_state,
             _move_state_to_neuron,
-            in_shardings=(None, prebuilt_model_state_partition_spec),
-            out_shardings=self._trainer_state_partition_specs,
+            in_shardings=(None, model_specs, learner_specs),
         )
         self._step_log("Initializing trainer state.")
+        cpu_device = jax.devices("cpu")[0]
+        with jax.default_device(cpu_device):
+            prng_key, model_params, learner_params = _init_state_cpu(prng_key, prebuilt_model_state)
         with self.mesh():
-            #self._trainer_state = init_computation(prng_key, prebuilt_model_state)
-            prng_key, model_params = _init_state_cpu(prng_key, prebuilt_model_state)
-            self._trainer_state = init_computation(prng_key, model_params)
+            self._trainer_state = init_computation(prng_key, model_params, learner_params)
+            logging.info("Transfer to device completed.")
 
     def _log_trainer_state_stats(self):
         total_num_params = count_model_params(self._trainer_state.model)
@@ -867,7 +889,7 @@ class SpmdTrainer(Module):
                     aux=None,
                 ),
             ),
-            donate_argnums=(0,),  # donate the state
+            #donate_argnums=(0,),  # donate the state - neuron doesn't support it
         )
 
     def compile_train_step(self) -> jax.stages.Compiled:
@@ -1033,3 +1055,27 @@ def select_mesh_config(trainer_config: SpmdTrainer.Config, *, mesh_selector: str
         logging.info("Mesh selector %s matches mesh rule %s", mesh_selector, mesh)
         if mesh is not REQUIRED:
             trainer_config.mesh_shape = mesh
+
+def create_named_sharding_optimizer(tensor_spec, mesh):
+    zero1=True
+    if isinstance(tensor_spec, TensorSpec):
+        if tensor_spec.mesh_axes == (None,):
+            return NamedSharding(mesh, PartitionSpec(None))
+        else:
+            if len(tensor_spec.mesh_axes) > len(tensor_spec.shape):
+                adjusted_mesh_axes = tensor_spec.mesh_axes[1:]
+            else:
+                adjusted_mesh_axes = tensor_spec.mesh_axes
+            if zero1:
+                adjusted_mesh_axes = tuple('data' if axis == 'fsdp' else axis for axis in adjusted_mesh_axes)
+            partition_spec = PartitionSpec(*adjusted_mesh_axes)
+            return NamedSharding(mesh, partition_spec)
+    return tensor_spec
+
+def create_named_sharding(param_spec, mesh):
+    if isinstance(param_spec, PartitionSpec):
+        return NamedSharding(
+            mesh,
+            param_spec
+        )
+    return param_spec

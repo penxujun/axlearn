@@ -442,7 +442,6 @@ def add_decayed_weights(
             count = None
         else:
             count = jnp.zeros([], jnp.int32)
-        #return AddDecayedWeightsState(count=count)
         return AddDecayedWeightsState(count=jnp.zeros((1,), dtype=jnp.int32))
 
     def update_fn(updates: NestedTensor, state: AddDecayedWeightsState, params: NestedOptParam):
@@ -1522,7 +1521,6 @@ def adastar_optimizer(
             )
 
         return _AdastarState(
-            #count=jnp.zeros([], jnp.int32), pps=jax.tree_util.tree_map(_init, params)
             count=jnp.zeros((1,), dtype=jnp.int32), pps=jax.tree_util.tree_map(_init, params)
         )
 

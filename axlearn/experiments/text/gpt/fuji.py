@@ -15,6 +15,7 @@ from axlearn.common.attention import (
     FusedQKVLinear,
     RepeatedTransformerLayer,
     RoFormerQKVLinear,
+    StackedTransformerLayer
 )
 from axlearn.common.utils import DataPartitionType
 from axlearn.common.embedding import TransformerTextEmbeddings
@@ -34,22 +35,22 @@ def get_trainer_kwargs(model_size: str, *, vocab_size: int) -> Dict[str, Any]:
     if model_size == "test":
         trainer_kwargs = dict(
             model_kwargs=dict(
-                num_layers=1,
-                hidden_dim=32,
-                #ffn_dim=scaled_hidden_dim(scale=8 / 3, round_up_to_multiples_of=16),
-                ffn_dim=scaled_hidden_dim(scale=4, round_up_to_multiples_of=16),
-                num_heads=8,
-                vocab_size=32,
+                num_layers=4,
+                hidden_dim=128*32,
+                ffn_dim=scaled_hidden_dim(scale=8 / 3, round_up_to_multiples_of=16),
+                #ffn_dim=scaled_hidden_dim(scale=4, round_up_to_multiples_of=16),
+                num_heads=32,
+                #vocab_size=8000,
             ),
             learner_kwargs=dict(
                 peak_lr=6e-4,
                 weight_decay=0.01,
             ),
             input_partition_type=DataPartitionType.DATA,
-            max_sequence_length=64,
-            train_batch_size=8,
-            max_step=5000,
-            mesh_shape=mesh_shape_from_axes(data=4, model=8),  # gpu
+            #max_sequence_length=2048,
+            train_batch_size=4,
+            max_step=20_000,
+            mesh_shape=mesh_shape_from_axes(data=4, model=8),  # neuron 
         )
     elif model_size == "7B":
         trainer_kwargs = dict(
@@ -121,7 +122,7 @@ def model_config(
         hidden_dim=hidden_dim,
         num_heads=num_heads,
         vocab_size=vocab_size,
-        stack_cfg=RepeatedTransformerLayer.default_config(),
+        stack_cfg=StackedTransformerLayer.default_config(), # Repeated transformer layer breaks Neuron
         activation_fn=activation_fn,
         ffn_dim=ffn_dim,
         normalization=RMSNorm.default_config().set(eps=1e-5, forward_dtype=None),
