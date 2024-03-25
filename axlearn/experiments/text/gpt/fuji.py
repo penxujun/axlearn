@@ -43,12 +43,12 @@ def get_trainer_kwargs(model_size: str, *, vocab_size: int) -> Dict[str, Any]:
                 #vocab_size=8000,
             ),
             learner_kwargs=dict(
-                peak_lr=6e-4,
-                weight_decay=0.01,
+                peak_lr=6e-5,
+                weight_decay=6e-8, #0.01,
             ),
             input_partition_type=DataPartitionType.DATA,
             #max_sequence_length=2048,
-            train_batch_size=4,
+            train_batch_size=8,
             max_step=20_000,
             mesh_shape=mesh_shape_from_axes(data=4, model=8),  # neuron 
         )

@@ -61,7 +61,7 @@ export XLA_USE_BF16=1
 export NEURON_CC_FLAGS="--dump=./compiler_dump --framework=XLA --model-type transformer --no-internal-hlo-remat --enable-mixed-precision-accumulation -O1"
 
 export NEURON_RT_STOCHASTIC_ROUNDING_EN=1
-export NEURON_RT_ASYNC_EXEC_MAX_INFLIGHT_REQUESTS=5
+export NEURON_RT_ASYNC_EXEC_MAX_INFLIGHT_REQUESTS=3
 
 export JAX_TRACEBACK_FILTERING=off # this enables verbose frame logging in jax
 
